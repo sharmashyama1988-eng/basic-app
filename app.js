@@ -114,8 +114,8 @@ function getContext() {
 }
 
 async function performSearch(query, page) {
-    // 1. Fetch from Wikipedia
-    const data = await searchWikipedia(query);
+    // 1. Fetch from Internet
+    const data = await searchInternet(query);
     globalWikiResults = data.results;
 
     if (data.suggestion) {
@@ -136,28 +136,83 @@ async function performSearch(query, page) {
     }
 }
 
-async function searchWikipedia(query) {
-    const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srinfo=suggestion&utf8=&format=json&origin=*&srlimit=100`;
+async function searchInternet(query) {
     let resultData = { results: [], suggestion: null };
+    const maxResults = 100;
 
     try {
-        const response = await fetch(url);
+        // Step 1: Search Whole Internet using DuckDuckGo HTML via AllOrigins (CORS Bypass)
+        const dDGoUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(dDGoUrl)}`;
+
+        const response = await fetch(proxyUrl);
         const data = await response.json();
 
-        if (data.query && data.query.searchinfo && data.query.searchinfo.suggestion) {
-            resultData.suggestion = data.query.searchinfo.suggestion;
-        }
+        if (data.contents) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(data.contents, "text/html");
 
-        if (data.query && data.query.search) {
-            resultData.results = data.query.search.map(item => ({
-                title: item.title,
-                url: `https://en.wikipedia.org/wiki/${encodeURIComponent(item.title.replace(/ /g, '_'))}`,
-                snippet: item.snippet
-            }));
+            // Extract Did You Mean
+            const spellEl = doc.querySelector('.spell');
+            if (spellEl) {
+                resultData.suggestion = spellEl.textContent.replace('Including results for', '').replace('Search only for', '').trim();
+            }
+
+            // Extract Search Results
+            const resultNodes = doc.querySelectorAll('.result');
+            resultNodes.forEach(node => {
+                if (resultData.results.length >= maxResults) return;
+
+                const titleEl = node.querySelector('.result__title a');
+                const snippetEl = node.querySelector('.result__snippet');
+                let urlEl = node.querySelector('.result__url');
+
+                if (titleEl && snippetEl) {
+                    let actualUrl = '';
+                    // Clean URL
+                    if (urlEl) {
+                        actualUrl = urlEl.textContent.trim().replace(/\s+/g, '');
+                        if (!actualUrl.startsWith('http')) {
+                            actualUrl = 'https://' + actualUrl;
+                        }
+                    } else {
+                        actualUrl = titleEl.href || '#';
+                    }
+
+                    resultData.results.push({
+                        title: titleEl.textContent.trim(),
+                        url: actualUrl,
+                        snippet: snippetEl.textContent.trim()
+                    });
+                }
+            });
         }
     } catch (error) {
-        console.error("Wikipedia API error:", error);
+        console.error("Internet Search API error:", error);
     }
+
+    // Step 2: Fallback to Wikipedia if Internet block happens or no results
+    if (resultData.results.length === 0) {
+        console.log("Internet search blocked or empty, falling back to Wikipedia");
+        const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srinfo=suggestion&utf8=&format=json&origin=*&srlimit=100`;
+        try {
+            const wResponse = await fetch(wikiUrl);
+            const wData = await wResponse.json();
+            if (wData.query && wData.query.searchinfo && wData.query.searchinfo.suggestion) {
+                resultData.suggestion = wData.query.searchinfo.suggestion;
+            }
+            if (wData.query && wData.query.search) {
+                resultData.results = wData.query.search.map(item => ({
+                    title: item.title,
+                    url: `https://en.wikipedia.org/wiki/${encodeURIComponent(item.title.replace(/ /g, '_'))}`,
+                    snippet: item.snippet
+                }));
+            }
+        } catch (wError) {
+            console.error("Wikipedia Fallback error:", wError);
+        }
+    }
+
     return resultData;
 }
 
@@ -191,7 +246,7 @@ async function getAISummary(query, wikiResults) {
     const context = getContext();
     const wikiContext = wikiResults.slice(0, 5).map(r => `- ${r.title}: ${r.snippet.replace(/<[^>]*>?/g, '')}`).join('\n');
 
-    const prompt = `You are Amisphere AI, a personalized smart search assistant. \nUser's current query: '${query}'\nUser History Profile: ${context}\n\nTop 5 Wikipedia results for context:\n${wikiContext}\n\nBased on the user's current query, their historical interests, and the provided Wikipedia knowledge, write a highly concise, helpful, and insightful summary.\nFocus on answering the user's query directly while also suggesting 1-2 external sites (with imaginary or real urls) or related topics they might like based on their history. No markdown code blocks, just plain bare HTML tags allowed (e.g. <b>, <i>, <br>, <ul>, <li>, <a href="...">) so it renders securely on the page.`;
+    const prompt = `You are Amisphere AI, a personalized smart search assistant. \nUser's current query: '${query}'\nUser History Profile: ${context}\n\nTop 5 Web results for context:\n${wikiContext}\n\nBased on the user's current query, their historical interests, and the provided internet text knowledge, write a highly concise, helpful, and insightful summary.\nFocus on answering the user's query directly while also suggesting 1-2 external sites (with imaginary or real urls) or related topics they might like based on their history. No markdown code blocks, just plain bare HTML tags allowed (e.g. <b>, <i>, <br>, <ul>, <li>, <a href="...">) so it renders securely on the page.`;
 
     const apiUrl = `https://openrouter.ai/api/v1/chat/completions`;
     const aiContentDiv = document.getElementById('ai-content');
