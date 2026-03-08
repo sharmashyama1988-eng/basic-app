@@ -35,6 +35,98 @@ const FREE_AI_MODELS = [
 ];
 let globalWikiResults = [];
 
+// ==================== CACHE SYSTEM ====================
+const CACHE_PREFIX = 'amisphere_cache_';
+const CACHE_TTL = 1000 * 60 * 30; // 30 minutes
+
+function getCachedResults(query) {
+    try {
+        const cached = localStorage.getItem(CACHE_PREFIX + query.toLowerCase());
+        if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Date.now() - parsed.timestamp < CACHE_TTL) {
+                console.log('CACHE HIT for:', query);
+                return parsed.data;
+            } else {
+                localStorage.removeItem(CACHE_PREFIX + query.toLowerCase());
+            }
+        }
+    } catch (e) { }
+    return null;
+}
+
+function setCachedResults(query, data) {
+    try {
+        localStorage.setItem(CACHE_PREFIX + query.toLowerCase(), JSON.stringify({
+            timestamp: Date.now(),
+            data: data
+        }));
+    } catch (e) {
+        // localStorage full — clean old caches
+        cleanOldCaches();
+    }
+}
+
+function cleanOldCaches() {
+    const keys = Object.keys(localStorage).filter(k => k.startsWith(CACHE_PREFIX));
+    keys.sort().slice(0, Math.floor(keys.length / 2)).forEach(k => localStorage.removeItem(k));
+}
+
+// ==================== VOICE SEARCH ====================
+function startVoiceSearch() {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        alert('Voice Search is not supported in this browser. Use Chrome for best experience.');
+        return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    // Show listening UI
+    const overlay = document.createElement('div');
+    overlay.id = 'voice-overlay';
+    overlay.innerHTML = `
+        <div style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+            <div style="width:80px;height:80px;border-radius:50%;background:#ea4335;display:flex;align-items:center;justify-content:center;animation:pulse 1.5s infinite;">
+                <i class="fa-solid fa-microphone" style="font-size:36px;color:white;"></i>
+            </div>
+            <p style="color:white;font-size:24px;margin-top:20px;">Listening...</p>
+            <p style="color:#9aa0a6;font-size:14px;margin-top:8px;">Speak now</p>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    recognition.start();
+
+    recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        document.getElementById('search-input').value = transcript;
+        overlay.remove();
+        window.location.href = `results.html?q=${encodeURIComponent(transcript)}`;
+    };
+
+    recognition.onerror = (event) => {
+        overlay.remove();
+        console.warn('Voice error:', event.error);
+    };
+
+    recognition.onend = () => {
+        if (document.getElementById('voice-overlay')) {
+            document.getElementById('voice-overlay').remove();
+        }
+    };
+
+    overlay.addEventListener('click', () => {
+        recognition.stop();
+        overlay.remove();
+    });
+}
+
+// Attach voice search to all mic buttons
+window.startVoiceSearch = startVoiceSearch;
+
 document.addEventListener('DOMContentLoaded', () => {
     const themeBtn = document.getElementById('theme-toggle');
     if (themeBtn) {
@@ -83,6 +175,66 @@ document.addEventListener('DOMContentLoaded', () => {
         trackSearch(query);
         performSearch(query, page);
     }
+
+    // Autocomplete Logic (Local History + Backend Hybrid)
+    const autocompleteBox = document.getElementById('autocomplete-box');
+    const searchInputEl = document.getElementById('search-input');
+
+    if (searchInputEl && autocompleteBox) {
+        searchInputEl.addEventListener('input', async (e) => {
+            const val = e.target.value.trim();
+            if (val.length >= 2) {
+                // LOCAL AUTOCOMPLETE from search history (always works offline)
+                let history = JSON.parse(localStorage.getItem('amisphere_history') || '[]');
+                let localSuggestions = history.filter(h => h.toLowerCase().startsWith(val.toLowerCase())).slice(0, 6);
+
+                // Also try backend if available
+                try {
+                    const res = await fetch(`http://127.0.0.1:5000/autocomplete?q=${encodeURIComponent(val)}`, { signal: AbortSignal.timeout(1500) });
+                    if (res.ok) {
+                        const data = await res.json();
+                        // Merge backend suggestions with local, removing duplicates
+                        const merged = [...new Set([...localSuggestions, ...data.suggestions])].slice(0, 8);
+                        renderAutocomplete(merged);
+                        return;
+                    }
+                } catch (err) {
+                    // backend offline — use local only
+                }
+                renderAutocomplete(localSuggestions);
+            } else {
+                autocompleteBox.style.display = 'none';
+            }
+        });
+
+        // Close when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.search-box-container')) {
+                autocompleteBox.style.display = 'none';
+                const sb = searchInputEl.closest('.search-box');
+                if (sb) { sb.style.borderBottomLeftRadius = '24px'; sb.style.borderBottomRightRadius = '24px'; }
+            }
+        });
+    }
+
+    function renderAutocomplete(suggestions) {
+        if (!suggestions || suggestions.length === 0) {
+            autocompleteBox.style.display = 'none';
+            const sb = searchInputEl.closest('.search-box');
+            if (sb) { sb.style.borderBottomLeftRadius = '24px'; sb.style.borderBottomRightRadius = '24px'; }
+            return;
+        }
+
+        const sb = searchInputEl.closest('.search-box');
+        if (sb) { sb.style.borderBottomLeftRadius = '0px'; sb.style.borderBottomRightRadius = '0px'; }
+
+        autocompleteBox.innerHTML = suggestions.map(s => `
+            <div class="suggestion-item" onclick="document.getElementById('search-input').value='${s}'; window.location.href='results.html?q=${encodeURIComponent(s)}';">
+                <i class="fa-solid fa-clock-rotate-left suggestion-icon"></i> <span style="font-weight: bold;">${s}</span>
+            </div>
+        `).join('');
+        autocompleteBox.style.display = 'block';
+    }
 });
 
 function trackSearch(query) {
@@ -114,8 +266,21 @@ function getContext() {
 }
 
 async function performSearch(query, page) {
-    // 1. Fetch from Internet
-    const data = await searchInternet(query);
+    const startTime = performance.now();
+
+    // 1. CHECK CACHE FIRST
+    let data = getCachedResults(query);
+    let fromCache = false;
+    if (data) {
+        fromCache = true;
+    } else {
+        // 2. Fetch from Internet
+        data = await searchInternet(query);
+        // Save to cache for next time
+        if (data.results.length > 0) {
+            setCachedResults(query, data);
+        }
+    }
     globalWikiResults = data.results;
 
     if (data.suggestion) {
@@ -129,10 +294,19 @@ async function performSearch(query, page) {
     renderWikiResults(globalWikiResults, query, page);
     renderPagination(globalWikiResults.length, page, query);
 
-    // 2. Fetch from Gemini (Only generate AI overview if on page 1)
+    // Show Search Stats (Google style: "About X results (Y seconds)")
+    const endTime = performance.now();
+    const timeTaken = ((endTime - startTime) / 1000).toFixed(2);
+    const statsDiv = document.getElementById('search-stats');
+    if (statsDiv) {
+        statsDiv.innerHTML = `About ${globalWikiResults.length} results (${timeTaken} seconds)${fromCache ? ' <i class="fa-solid fa-bolt" style="color:#fbbc05;" title="From Cache"></i>' : ''}`;
+        statsDiv.style.display = 'block';
+    }
+
+    // 3. Fetch AI overview (Only on page 1)
     if (page === 1) {
         document.getElementById('ai-overview').style.display = 'block';
-        getAISummary(query, globalWikiResults); // Async execution handled inside
+        getAISummary(query, globalWikiResults);
     }
 }
 

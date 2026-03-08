@@ -23,10 +23,17 @@
             <a href="index.html" class="results-logo">
                 <span>A</span><span>m</span><span>i</span><span>s</span><span>p</span><span>h</span><span>e</span><span>r</span><span>e</span>
             </a>
-            <form action="results.html" method="GET" style="flex: 1;">
-                <div class="search-box header-search-box">
-                    <i class="fa-solid fa-magnifying-glass search-icon" style="color: #4285f4; margin-right: 15px;"></i>
-                    <input type="text" name="q" id="search-input" class="search-input" required autocomplete="off">
+            <form action="results.html" method="GET" style="flex: 1;" class="search-form">
+                <div class="search-box-container" style="position: relative;">
+                    <div class="search-box header-search-box" style="width: 100%;">
+                        <i class="fa-solid fa-magnifying-glass search-icon"
+                            style="color: #4285f4; margin-right: 15px;"></i>
+                        <input type="text" name="q" id="search-input" class="search-input" required autocomplete="off">
+                        <i class="fa-solid fa-microphone search-icon"
+                            style="color: #4285f4; cursor: pointer; margin-right: 5px;"
+                            onclick="startVoiceSearch()"></i>
+                    </div>
+                    <div id="autocomplete-box" class="autocomplete-suggestions" style="display:none;"></div>
                 </div>
             </form>
             <button id="theme-toggle" class="theme-toggle" title="Toggle Dark Mode">
@@ -47,6 +54,10 @@
     </header>
 
     <div class="results-container">
+        <!-- Search Stats -->
+        <div id="search-stats" class="search-stats"
+            style="display: none; font-size: 13px; color: var(--text-secondary); margin-bottom: 15px;"></div>
+
         <!-- Did you mean / Spellcheck -->
         <div id="did-you-mean" class="did-you-mean" style="display: none;"></div>
 
