@@ -1,5 +1,5 @@
 const OPENROUTER_API_KEYS = [
-    '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'
+    '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'
     // Aap yahan comma laga kar aur keys add kar sakte hain:
     // , 'aapki_dusri_key_yahan'
 ];
@@ -11,6 +11,28 @@ function getNextAPIKey() {
     return key;
 }
 
+const FREE_AI_MODELS = [
+    "google/gemini-2.0-flash-lite-preview-02-05:free",
+    "google/gemini-2.0-pro-exp-02-05:free",
+    "google/gemini-2.0-flash-thinking-exp:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "deepseek/deepseek-r1-distill-llama-70b:free",
+    "deepseek/deepseek-r1:free",
+    "deepseek/deepseek-chat:free",
+    "qwen/qwen-2.5-coder-32b-instruct:free",
+    "qwen/qwen-vl-plus:free",
+    "mistralai/mistral-nemo:free",
+    "mistralai/mistral-7b-instruct:free",
+    "nvidia/llama-3.1-nemotron-70b-instruct:free",
+    "microsoft/phi-3-mini-128k-instruct:free",
+    "microsoft/phi-3-medium-128k-instruct:free",
+    "huggingfaceh4/zephyr-7b-beta:free",
+    "openchat/openchat-7b:free",
+    "cognitivecomputations/dolphin-mixtral-8x7b:free",
+    "anthropic/claude-3-haiku:free",
+    "cohere/command-r:free"
+];
 let globalWikiResults = [];
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -94,8 +116,7 @@ async function performSearch(query, page) {
     // 2. Fetch from Gemini (Only generate AI overview if on page 1)
     if (page === 1) {
         document.getElementById('ai-overview').style.display = 'block';
-        const aiSummary = await getAISummary(query, globalWikiResults);
-        document.getElementById('ai-content').innerHTML = aiSummary;
+        getAISummary(query, globalWikiResults); // Async execution handled inside
     }
 }
 
@@ -157,22 +178,27 @@ async function getAISummary(query, wikiResults) {
     const prompt = `You are Amisphere AI, a personalized smart search assistant. \nUser's current query: '${query}'\nUser History Profile: ${context}\n\nTop 5 Wikipedia results for context:\n${wikiContext}\n\nBased on the user's current query, their historical interests, and the provided Wikipedia knowledge, write a highly concise, helpful, and insightful summary.\nFocus on answering the user's query directly while also suggesting 1-2 external sites (with imaginary or real urls) or related topics they might like based on their history. No markdown code blocks, just plain bare HTML tags allowed (e.g. <b>, <i>, <br>, <ul>, <li>, <a href="...">) so it renders securely on the page.`;
 
     const apiUrl = `https://openrouter.ai/api/v1/chat/completions`;
-    const maxRetries = Math.max(1, OPENROUTER_API_KEYS.length);
+    const aiContentDiv = document.getElementById('ai-content');
     let lastError = null;
 
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        const apiKey = getNextAPIKey();
+    for (let currentModelIndex = 0; currentModelIndex < FREE_AI_MODELS.length; currentModelIndex++) {
+        let modelName = FREE_AI_MODELS[currentModelIndex];
+        let apiKey = getNextAPIKey();
+
+        // Animation text with current model
+        aiContentDiv.innerHTML = `<span class="ai-loading-text"><i class="fa-solid fa-circle-notch fa-spin"></i> Trying AI Matrix: <b>${modelName.split(':')[0]}</b>...</span>`;
+
         try {
             const response = await fetch(apiUrl, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${apiKey}`,
-                    'HTTP-Referer': window.location.href, // Recommended by OpenRouter
-                    'X-Title': 'Amisphere',               // Recommended by OpenRouter
+                    'HTTP-Referer': window.location.href,
+                    'X-Title': 'Amisphere',
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    "model": "google/gemini-2.0-flash-lite-preview-02-05:free", // using free lightning fast gemini from openrouter
+                    "model": modelName,
                     "messages": [
                         { "role": "user", "content": prompt }
                     ]
@@ -180,24 +206,26 @@ async function getAISummary(query, wikiResults) {
             });
 
             if (!response.ok) {
-                // Agar limit reach ho gayi to error store karein aur next key try karein loop me
-                throw new Error(`HTTP error! status: ${response.status}`);
+                lastError = new Error(`HTTP error! status: ${response.status}`);
+                continue; // Goto next model/key
             }
 
             const data = await response.json();
             if (data.choices && data.choices.length > 0) {
-                return data.choices[0].message.content.replace(/```html/g, '').replace(/```/g, '');
+                // Formatting AI success response
+                let resultText = data.choices[0].message.content.replace(/```html/g, '').replace(/```/g, '');
+                aiContentDiv.innerHTML = resultText + `<br><br><small style="color: #34a853; font-style: italic;"><i class="fa-solid fa-check-circle"></i> Generated by ${modelName}</small>`;
+                return; // Stop and exit loop! we got a result
             }
-            return "Amisphere AI could not generate a summary.";
-
         } catch (error) {
-            console.warn(`OpenRouter API error on key attempt ${attempt + 1}:`, error);
+            console.warn(`OpenRouter Model Failed [${modelName}]:`, error);
             lastError = error;
-            // Loop continue karega to agle key rotation par jayega
+            // Loop will continue to the next model automatically
+            await new Promise(r => setTimeout(r, 500)); // Half second delay for animation effect
         }
     }
 
-    return `Amisphere AI is currently unavailable or over quota. (${lastError?.message || "Please check your api key limits"})`;
+    aiContentDiv.innerHTML = `Amisphere AI is currently unavailable or over quota. (${lastError?.message || "All models failed limits"})`;
 }
 
 function renderPagination(totalResults, currentPage, query) {
