@@ -1,5 +1,5 @@
 const OPENROUTER_API_KEYS = [
-    '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'
+    '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'
     // Aap yahan comma laga kar aur keys add kar sakte hain:
     // , 'aapki_dusri_key_yahan'
 ];
